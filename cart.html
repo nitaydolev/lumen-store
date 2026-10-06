@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bag - Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="page-head">
+  <h1>Your Bag</h1>
+  <p id="sub">Free delivery and free returns.</p>
+</div>
+
+<main class="wrap">
+  <div id="items"></div>
+  <div id="foot"></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var itemsEl = document.getElementById('items');
+  var footEl = document.getElementById('foot');
+
+  function currentItems() {
+    return readCart().map(cartRowToItem);
+  }
+
+  function render() {
+    var rows = readCart();
+    paintCartCount();
+
+    if (!rows.length) {
+      itemsEl.innerHTML = '<div class="empty"><p>Your bag is empty.</p>' +
+        '<div class="btn-row" style="justify-content:center"><a class="btn" href="index.html#store">Continue Shopping</a></div></div>';
+      footEl.innerHTML = '';
+      document.getElementById('sub').textContent = '';
+      return;
+    }
+
+    itemsEl.innerHTML = rows.map(function (r) {
+      var p = getProduct(r.id);
+      var key = lineKey(r.id, r.color, r.storage);
+      var unit = unitPrice(p, r.storage);
+      var list = listPrice(p, r.storage);
+      return '<div class="line-item">' +
+        '<div class="art">' + artFor(p, r.color) + '</div>' +
+        '<div class="info"><h3>' + p.name + '</h3><p>' + variantLabel(r.color, r.storage) + '</p>' +
+          '<button class="link-remove" data-remove="' + key + '">Remove</button></div>' +
+        '<div class="qty">' +
+          '<button data-dec="' + key + '">-</button><span>' + r.qty + '</span><button data-inc="' + key + '">+</button>' +
+        '</div>' +
+        '<div class="line-price">' +
+          (unit < list ? '<s>' + money(list * r.qty) + '</s><br>' : '') + money(unit * r.qty) +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    var total = cartTotal(rows);
+    footEl.innerHTML =
+      '<div class="totals">' +
+        '<div><span>Subtotal</span><span>' + money(total) + '</span></div>' +
+        '<div><span>Shipping</span><span>Free</span></div>' +
+        '<div class="grand"><span>Total</span><span>' + money(total) + '</span></div>' +
+      '</div>' +
+      '<div class="btn-row" style="justify-content:flex-end">' +
+        '<a class="btn btn-ghost" href="index.html#store">Continue Shopping</a>' +
+        '<a class="btn" id="checkout" href="checkout.html">Check Out</a>' +
+      '</div>';
+  }
+
+  function rowByKey(key) {
+    return readCart().find(function (r) { return lineKey(r.id, r.color, r.storage) === key; });
+  }
+
+  itemsEl.addEventListener('click', function (e) {
+    var t = e.target;
+    var key = t.dataset.inc || t.dataset.dec || t.dataset.remove;
+    if (!key) return;
+
+    var row = rowByKey(key);
+    if (!row) return;
+    var p = getProduct(row.id);
+
+    if (t.dataset.inc) {
+      setLineQty(key, row.qty + 1);
+      var added = toItem(p, { color: row.color, storage: row.storage, qty: 1 });
+      pushEcommerce('add_to_cart', { currency: CURRENCY, value: itemsValue([added]), items: [added] });
+
+    } else if (t.dataset.dec) {
+      setLineQty(key, row.qty - 1);
+      var one = toItem(p, { color: row.color, storage: row.storage, qty: 1 });
+      pushEcommerce('remove_from_cart', { currency: CURRENCY, value: itemsValue([one]), items: [one] });
+
+    } else {
+      setLineQty(key, 0);
+      var all = toItem(p, { color: row.color, storage: row.storage, qty: row.qty });
+      pushEcommerce('remove_from_cart', { currency: CURRENCY, value: itemsValue([all]), items: [all] });
+    }
+
+    render();
+  });
+
+  footEl.addEventListener('click', function (e) {
+    if (e.target.id !== 'checkout') return;
+    var items = currentItems();
+    // GA4: begin_checkout
+    pushEcommerce('begin_checkout', { currency: CURRENCY, value: itemsValue(items), items: items });
+  });
+
+  render();
+
+  // GA4: view_cart
+  var items = currentItems();
+  if (items.length) {
+    pushEcommerce('view_cart', { currency: CURRENCY, value: itemsValue(items), items: items });
+  }
+})();
+</script>
+</body>
+</html>

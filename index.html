@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="promo" id="promo"></div>
+
+<header class="hero">
+  <h1>Lumen One Pro</h1>
+  <p>Titanium. So strong. So light. So Lumen.</p>
+  <div class="hero-links">
+    <a href="product.html?id=LUM-ONE-PRO">Learn more</a>
+    <a href="product.html?id=LUM-ONE-PRO">Buy</a>
+  </div>
+  <div class="hero-art" id="hero-art"></div>
+</header>
+
+<main class="wrap">
+  <h2 class="section-title" id="store">Shop by category</h2>
+  <div class="cat-grid cat-grid-lg" id="cat-grid"></div>
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">The latest</h2>
+      <p class="section-sub">One pick from every category.</p>
+    </div>
+    <a class="section-all" id="browse-all" href="category.html?cat=all"></a>
+  </div>
+  <div class="grid grid-compact" id="grid"></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  renderPromoBanner(document.getElementById('promo'));
+
+  var hero = getProduct('LUM-ONE-PRO');
+  document.getElementById('hero-art').innerHTML = artFor(hero);
+
+  document.getElementById('browse-all').textContent = 'Browse all ' + PRODUCTS.length + ' products ›';
+
+  // Category tiles
+  document.getElementById('cat-grid').innerHTML = CATEGORIES.map(function (c) {
+    var list = productsInCategory(c.id);
+    return '<a class="cat-card" href="category.html?cat=' + c.id + '">' +
+             '<div class="cat-art">' + artFor(list[0]) + '</div>' +
+             '<span>' + c.name + '</span>' +
+             '<small>' + list.length + ' products</small>' +
+           '</a>';
+  }).join('');
+
+  // Featured products: one per category
+  var featured = CATEGORIES.map(function (c) { return productsInCategory(c.id)[0]; });
+
+  var items = renderProductGrid(
+    document.getElementById('grid'),
+    featured,
+    'home_featured',
+    'Home - New and Featured'
+  );
+
+  // GA4: view_item_list
+  pushEcommerce('view_item_list', {
+    item_list_id: 'home_featured',
+    item_list_name: 'Home - New and Featured',
+    items: items
+  });
+})();
+</script>
+</body>
+</html>

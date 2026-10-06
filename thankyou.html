@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order confirmed - Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<main class="confirm">
+  <div class="check">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg>
+  </div>
+  <h1>Thank you for your order</h1>
+  <p>A confirmation has been sent to your email.</p>
+  <div class="order-id" id="order-id"></div>
+  <div class="btn-row" style="justify-content:center"><a class="btn" href="index.html#store">Continue Shopping</a></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var order = null;
+  try { order = JSON.parse(sessionStorage.getItem('lumen_last_order')); } catch (e) {}
+
+  if (!order) {
+    document.getElementById('order-id').textContent = 'No recent order found';
+    return;
+  }
+
+  document.getElementById('order-id').textContent = 'Order ' + order.transaction_id;
+
+  // GA4: purchase
+  pushEcommerce('purchase', {
+    transaction_id: order.transaction_id,
+    currency: order.currency,
+    value: order.value,
+    tax: order.tax,
+    shipping: order.shipping,
+    coupon: order.coupon,
+    items: order.items
+  });
+
+  // Fire once only, so a page refresh does not duplicate the transaction
+  try { sessionStorage.removeItem('lumen_last_order'); } catch (e) {}
+})();
+</script>
+</body>
+</html>

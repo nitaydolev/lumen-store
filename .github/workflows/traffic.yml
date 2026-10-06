@@ -1,0 +1,50 @@
+name: Store traffic
+
+# Wakes up every 30 minutes, asks the traffic model how busy this slice of
+# the day should be, drives that many visits through the live store, exits.
+# Several of these an hour draw the same daily curve a continuous run would.
+
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:          # lets you run it by hand from the Actions tab
+    inputs:
+      daily:
+        description: 'Target sessions per day'
+        required: false
+        default: '1200'
+
+concurrency:
+  group: store-traffic        # never let two runs overlap
+  cancel-in-progress: false
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      # The curve follows this clock, so the shape matches what the GA4
+      # property shows. The runner itself is on UTC.
+      TZ: Asia/Jerusalem
+      STORE_URL: https://lumen-store-orcin.vercel.app
+      DAILY: ${{ github.event.inputs.daily || '1200' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: traffic-generator
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: traffic-generator
+        run: npx playwright install --with-deps chromium
+
+      - name: Send traffic
+        working-directory: traffic-generator
+        run: node generate.js --batch 30 --daily "$DAILY" --url "$STORE_URL"

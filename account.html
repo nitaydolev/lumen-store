@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account - Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="page-head">
+  <h1 id="acc-title">Sign in to Lumen</h1>
+  <p id="acc-sub">Your bag, your orders, on every device.</p>
+</div>
+
+<main class="wrap">
+  <div class="form" id="acc-body"></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var body = document.getElementById('acc-body');
+  var title = document.getElementById('acc-title');
+  var sub = document.getElementById('acc-sub');
+
+  function signedInView(u) {
+    title.textContent = 'Hello, ' + u.name;
+    sub.textContent = u.email;
+    body.innerHTML =
+      '<div class="summary-box">' +
+        '<div><span>Name</span><span>' + u.name + '</span></div>' +
+        '<div><span>Email</span><span>' + u.email + '</span></div>' +
+        '<div><span>Customer ID</span><span>' + u.user_id + '</span></div>' +
+      '</div>' +
+      '<p class="note">This is the id sent to Analytics as <strong>user_id</strong>. It is derived from your email and contains no personal detail.</p>' +
+      '<div class="btn-row"><button class="btn btn-ghost btn-wide" id="signout">Sign Out</button></div>';
+
+    document.getElementById('signout').addEventListener('click', function () {
+      signOut();
+      location.reload();
+    });
+  }
+
+  function formsView() {
+    body.innerHTML =
+      '<div class="tabs">' +
+        '<button class="tab is-on" data-tab="signin">Sign In</button>' +
+        '<button class="tab" data-tab="signup">Create Account</button>' +
+      '</div>' +
+
+      '<form id="signin">' +
+        '<div class="field"><label>Email</label><input type="email" name="email" value="nitay@example.com" required></div>' +
+        '<div class="field"><label>Password</label><input type="password" name="password" value="demo-password" required></div>' +
+        '<p class="note">Demo store. Nothing is sent anywhere and no password is stored.</p>' +
+        '<div class="btn-row"><button class="btn btn-wide" type="submit">Sign In</button></div>' +
+      '</form>' +
+
+      '<form id="signup" hidden>' +
+        '<div class="field"><label>Name</label><input name="name" value="Nitay" required></div>' +
+        '<div class="field"><label>Email</label><input type="email" name="email" value="nitay@example.com" required></div>' +
+        '<div class="field"><label>Password</label><input type="password" name="password" value="demo-password" required></div>' +
+        '<p class="note">Demo store. Nothing is sent anywhere and no password is stored.</p>' +
+        '<div class="btn-row"><button class="btn btn-wide" type="submit">Create Account</button></div>' +
+      '</form>';
+
+    body.querySelector('.tabs').addEventListener('click', function (e) {
+      var b = e.target.closest('.tab');
+      if (!b) return;
+      body.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('is-on', t === b); });
+      document.getElementById('signin').hidden = b.dataset.tab !== 'signin';
+      document.getElementById('signup').hidden = b.dataset.tab !== 'signup';
+      title.textContent = b.dataset.tab === 'signin' ? 'Sign in to Lumen' : 'Create your Lumen account';
+    });
+
+    // GA4: login
+    document.getElementById('signin').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var u = signIn(this.email.value);
+      window.dataLayer.push({ user_id: u.user_id, logged_in: true });
+      window.dataLayer.push({ event: 'login', method: 'Email' });
+      location.href = 'account.html';
+    });
+
+    // GA4: sign_up
+    document.getElementById('signup').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var u = signIn(this.email.value, this.name.value);
+      window.dataLayer.push({ user_id: u.user_id, logged_in: true });
+      window.dataLayer.push({ event: 'sign_up', method: 'Email' });
+      location.href = 'account.html';
+    });
+  }
+
+  var user = currentUser();
+  if (user) { signedInView(user); } else { formsView(); }
+})();
+</script>
+</body>
+</html>

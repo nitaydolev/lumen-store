@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="wrap">
+  <nav class="crumbs crumbs-top" id="crumbs" aria-label="Breadcrumb"></nav>
+</div>
+
+<div class="page-head">
+  <h1 id="cat-title">Store</h1>
+  <p id="cat-sub"></p>
+</div>
+
+<main class="wrap">
+  <div class="grid" id="grid"></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var catId = new URLSearchParams(location.search).get('cat') || CATEGORIES[0].id;
+  var isAll = catId === 'all';
+  var name = isAll ? 'All Products' : categoryName(catId);
+  var products = isAll ? PRODUCTS.slice() : productsInCategory(catId);
+
+  document.title = name + ' - Lumen';
+
+  document.getElementById('crumbs').innerHTML =
+    '<a href="index.html#store">Store</a>' +
+    '<span aria-hidden="true">&#8250;</span>' +
+    '<span class="crumb-current">' + name + '</span>';
+
+  document.getElementById('cat-title').textContent = name;
+  document.getElementById('cat-sub').textContent =
+    products.length + (products.length === 1 ? ' product' : ' products');
+
+  var listId = 'category_' + catId;
+  var listName = 'Category - ' + name;
+
+  var items = renderProductGrid(document.getElementById('grid'), products, listId, listName);
+
+  // GA4: view_item_list
+  pushEcommerce('view_item_list', {
+    item_list_id: listId,
+    item_list_name: listName,
+    items: items
+  });
+})();
+</script>
+</body>
+</html>

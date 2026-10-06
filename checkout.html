@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout - Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="page-head">
+  <h1>Checkout</h1>
+  <p id="step-label">Step 1 of 2 &middot; Shipping</p>
+</div>
+
+<main class="wrap">
+  <div class="form">
+    <div class="summary-box" id="summary"></div>
+
+    <form class="coupon" id="coupon-form">
+      <input name="code" placeholder="Discount code" aria-label="Discount code">
+      <button class="btn btn-ghost" type="submit">Apply</button>
+    </form>
+    <p class="note" id="coupon-msg">Try <strong>LUMEN10</strong>, <strong>WELCOME50</strong> or <strong>FREESHIP</strong>.</p>
+
+    <form id="shipping">
+      <div class="field"><label>Email</label><input type="email" value="nitay@example.com" required></div>
+      <div class="field-row">
+        <div class="field"><label>First name</label><input value="Nitay" required></div>
+        <div class="field"><label>Last name</label><input value="Dolev" required></div>
+      </div>
+      <div class="field"><label>Address</label><input value="350 Fifth Avenue" required></div>
+      <div class="field-row">
+        <div class="field"><label>City</label><input value="New York" required></div>
+        <div class="field"><label>ZIP code</label><input value="10118" required></div>
+      </div>
+      <div class="field">
+        <label>Shipping method</label>
+        <select id="shipping-tier">
+          <option value="Standard">Standard delivery, free</option>
+          <option value="Express">Express delivery, $12</option>
+          <option value="Pickup">Store pickup, free</option>
+        </select>
+      </div>
+      <div class="btn-row"><button class="btn btn-wide" type="submit">Continue to Payment</button></div>
+    </form>
+
+    <form id="payment" hidden>
+      <div class="field">
+        <label>Payment method</label>
+        <select id="payment-type">
+          <option value="Credit Card">Credit card</option>
+          <option value="PayPal">PayPal</option>
+          <option value="Wallet">Wallet</option>
+          <option value="Shop Pay">Shop Pay</option>
+        </select>
+      </div>
+      <div class="field"><label>Name on account</label><input value="Nitay Dolev"></div>
+      <p class="note">Demo store. No payment is taken and no card details are collected.</p>
+      <div class="btn-row"><button class="btn btn-wide" type="submit">Place Order</button></div>
+    </form>
+  </div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var rows = readCart();
+  if (!rows.length) { location.replace('cart.html'); return; }
+
+  var items = rows.map(cartRowToItem);
+  var subtotal = itemsValue(items);
+  var shippingTier = 'Standard';
+  var coupon = null;
+
+  function rawShipping() {
+    return shippingTier === 'Express' ? 12 : 0;
+  }
+
+  function shippingCost() {
+    return coupon && coupon.type === 'shipping' ? 0 : rawShipping();
+  }
+
+  function couponSaving() {
+    if (!coupon) return 0;
+    if (coupon.type === 'percent') return Math.round(subtotal * coupon.amount / 100);
+    if (coupon.type === 'fixed') return Math.min(coupon.amount, subtotal);
+    return rawShipping() - shippingCost();
+  }
+
+  function orderTotal() {
+    return subtotal - (coupon && coupon.type !== 'shipping' ? couponSaving() : 0) + shippingCost();
+  }
+
+  function renderSummary() {
+    document.getElementById('summary').innerHTML =
+      items.map(function (it) {
+        var paid = (it.price - (it.discount || 0)) * it.quantity;
+        return '<div><span>' + it.item_name + ' &middot; ' + it.item_variant + ' x' + it.quantity + '</span>' +
+               '<span>' + money(paid) + '</span></div>';
+      }).join('') +
+      (coupon ? '<div class="is-saving"><span>Discount &middot; ' + coupon.code + '</span><span>-' + money(couponSaving()) + '</span></div>' : '') +
+      '<div><span>Shipping</span><span>' + (shippingCost() ? money(shippingCost()) : 'Free') + '</span></div>' +
+      '<div class="grand"><span>Total</span><span>' + money(orderTotal()) + '</span></div>';
+  }
+
+  renderSummary();
+
+  document.getElementById('shipping-tier').addEventListener('change', function () {
+    shippingTier = this.value;
+    renderSummary();
+  });
+
+  document.getElementById('coupon-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var found = findCoupon(this.code.value);
+    var msg = document.getElementById('coupon-msg');
+
+    if (!found) {
+      coupon = null;
+      msg.innerHTML = 'That code is not valid. Try <strong>LUMEN10</strong>, <strong>WELCOME50</strong> or <strong>FREESHIP</strong>.';
+      renderSummary();
+      return;
+    }
+
+    coupon = found;
+    msg.textContent = coupon.code + ' applied. ' + coupon.label + '.';
+    renderSummary();
+  });
+
+  // Step 1 -> GA4: add_shipping_info
+  document.getElementById('shipping').addEventListener('submit', function (e) {
+    e.preventDefault();
+    pushEcommerce('add_shipping_info', {
+      currency: CURRENCY,
+      value: subtotal,
+      coupon: coupon ? coupon.code : undefined,
+      shipping_tier: shippingTier,
+      items: items
+    });
+    this.hidden = true;
+    document.getElementById('payment').hidden = false;
+    document.getElementById('step-label').innerHTML = 'Step 2 of 2 &middot; Payment';
+    window.scrollTo(0, 0);
+  });
+
+  // Step 2 -> GA4: add_payment_info, then move to the confirmation page
+  document.getElementById('payment').addEventListener('submit', function (e) {
+    e.preventDefault();
+    pushEcommerce('add_payment_info', {
+      currency: CURRENCY,
+      value: subtotal,
+      coupon: coupon ? coupon.code : undefined,
+      payment_type: document.getElementById('payment-type').value,
+      items: items
+    });
+
+    var order = {
+      transaction_id: 'LUM-' + Date.now().toString(36).toUpperCase(),
+      value: orderTotal(),
+      currency: CURRENCY,
+      coupon: coupon ? coupon.code : undefined,
+      shipping: shippingCost(),
+      tax: Math.round(orderTotal() * 0.08),
+      items: items
+    };
+    try { sessionStorage.setItem('lumen_last_order', JSON.stringify(order)); } catch (err) {}
+    clearCart();
+    location.href = 'thankyou.html';
+  });
+})();
+</script>
+</body>
+</html>

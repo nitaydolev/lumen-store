@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "lumen-store",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "-y", "live-server",
+        "--port=4321",
+        "--no-browser",
+        "--quiet",
+        "--ignore=traffic-generator,transcripts",
+        "."
+      ],
+      "port": 4321
+    }
+  ]
+}

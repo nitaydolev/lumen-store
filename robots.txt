@@ -1,0 +1,6 @@
+# Lumen is a fictional store built to practise analytics.
+# It should not be indexed, and search crawlers would only add noise
+# to the measurement data we are here to study.
+
+User-agent: *
+Disallow: /

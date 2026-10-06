@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<main class="wrap">
+  <section class="pdp">
+    <div class="pdp-art" id="pdp-art"></div>
+    <div id="pdp-info"></div>
+  </section>
+
+  <h2 class="section-title">You may also like</h2>
+  <div class="grid" id="related"></div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var id = new URLSearchParams(location.search).get('id');
+  var p = getProduct(id) || PRODUCTS[0];
+
+  var color = defaultColor(p);
+  var storage = defaultStorage(p);
+
+  document.title = p.name + ' - Lumen';
+
+  var artEl = document.getElementById('pdp-art');
+  var infoEl = document.getElementById('pdp-info');
+
+  function priceBlock() {
+    var list = listPrice(p, storage);
+    var pay = unitPrice(p, storage);
+    return pay < list
+      ? '<s>' + money(list) + '</s> <strong>' + money(pay) + '</strong> <span class="save">Save ' + money(list - pay) + '</span>'
+      : money(pay);
+  }
+
+  function paintArt() {
+    artEl.innerHTML = artFor(p, color);
+  }
+
+  function paintPrice() {
+    document.getElementById('pdp-price').innerHTML = priceBlock();
+  }
+
+  function paintInfo() {
+    infoEl.innerHTML =
+      '<nav class="crumbs" aria-label="Breadcrumb">' +
+        '<a href="index.html#store">Store</a>' +
+        '<span aria-hidden="true">&#8250;</span>' +
+        '<a href="category.html?cat=' + p.category + '">' + categoryName(p.category) + '</a>' +
+        '<span aria-hidden="true">&#8250;</span>' +
+        '<span class="crumb-current">' + p.name + '</span>' +
+      '</nav>' +
+      '<div class="eyebrow">' + p.eyebrow + '</div>' +
+      '<h1>' + p.name + '</h1>' +
+      '<div class="tagline">' + p.tagline + '</div>' +
+      '<div class="price" id="pdp-price">' + priceBlock() + '</div>' +
+
+      '<div class="option-group">' +
+        '<div class="option-label">Colour. <span>' + color + '</span></div>' +
+        '<div class="swatches" id="swatches">' +
+          p.colors.map(function (c) {
+            return '<button class="swatch' + (c.name === color ? ' is-on' : '') + '" data-color="' + c.name + '"' +
+                   ' title="' + c.name + '" aria-label="' + c.name + '">' +
+                   '<span style="background:' + c.hex + '"></span></button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+
+      (p.storage ?
+      '<div class="option-group">' +
+        '<div class="option-label">Storage. <span>' + storage + '</span></div>' +
+        '<div class="options" id="storages">' +
+          p.storage.map(function (s) {
+            var extra = s.delta ? '+' + money(s.delta) : 'Included';
+            return '<button class="option' + (s.label === storage ? ' is-on' : '') + '" data-storage="' + s.label + '">' +
+                   '<strong>' + s.label + '</strong><span>' + extra + '</span></button>';
+          }).join('') +
+        '</div>' +
+      '</div>' : '') +
+
+      '<ul class="specs">' + p.specs.map(function (s) {
+        return '<li><span>' + s[0] + '</span><span>' + s[1] + '</span></li>';
+      }).join('') + '</ul>' +
+
+      '<div class="btn-row">' +
+        '<button class="btn" id="add">Add to Bag</button>' +
+        '<a class="btn btn-ghost" href="cart.html">View Bag</a>' +
+        '<a class="btn btn-ghost" href="index.html#store">Continue Shopping</a>' +
+      '</div>' +
+      '<p class="added-note" id="added-note" hidden>' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg>' +
+        '<span id="added-text"></span> <a href="cart.html">View Bag</a>' +
+      '</p>';
+
+    wire();
+  }
+
+  function wire() {
+    var sw = document.getElementById('swatches');
+    if (sw) {
+      sw.addEventListener('click', function (e) {
+        var b = e.target.closest('.swatch');
+        if (!b) return;
+        color = b.dataset.color;
+        paintInfo();
+        paintArt();
+      });
+    }
+
+    var st = document.getElementById('storages');
+    if (st) {
+      st.addEventListener('click', function (e) {
+        var b = e.target.closest('.option');
+        if (!b) return;
+        storage = b.dataset.storage;
+        paintInfo();
+      });
+    }
+
+    // GA4: add_to_cart
+    document.getElementById('add').addEventListener('click', function () {
+      addToCart(p.id, color, storage, 1);
+      var item = toItem(p, { color: color, storage: storage, qty: 1 });
+      pushEcommerce('add_to_cart', {
+        currency: CURRENCY,
+        value: itemsValue([item]),
+        items: [item]
+      });
+      var inBag = readCart()
+        .filter(function (r) { return r.id === p.id && r.color === color && r.storage === storage; })
+        .reduce(function (n, r) { return n + r.qty; }, 0);
+
+      document.getElementById('added-text').textContent =
+        'Added. ' + inBag + ' x ' + variantLabel(color, storage) + ' in your bag.';
+      document.getElementById('added-note').hidden = false;
+    });
+  }
+
+  paintArt();
+  paintInfo();
+
+  // GA4: view_item
+  var viewed = toItem(p, { color: color, storage: storage, qty: 1 });
+  pushEcommerce('view_item', {
+    currency: CURRENCY,
+    value: itemsValue([viewed]),
+    items: [viewed]
+  });
+
+  // Cross-sell row, tracked as its own product list
+  var relItems = renderProductGrid(
+    document.getElementById('related'),
+    relatedProducts(p, 3),
+    'pdp_recommended',
+    'Product Page - You May Also Like'
+  );
+
+  // GA4: view_item_list for the recommendations
+  pushEcommerce('view_item_list', {
+    item_list_id: 'pdp_recommended',
+    item_list_name: 'Product Page - You May Also Like',
+    items: relItems
+  });
+})();
+</script>
+</body>
+</html>

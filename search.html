@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search - Lumen</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Who is browsing, must load before GTM -->
+<script src="js/identity.js"></script>
+<!-- Consent Mode defaults, must load before GTM -->
+<script src="js/consent.js"></script>
+<!-- Google Tag Manager -->
+<script src="js/gtm.js"></script>
+</head>
+<body>
+
+<div id="site-nav"></div>
+
+<div class="page-head">
+  <h1 id="search-title">Search</h1>
+  <p id="search-sub"></p>
+</div>
+
+<main class="wrap">
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>
+    <p>No results. Try a product name like <strong>Band</strong> or a category like <strong>Audio</strong>.</p>
+    <div class="btn-row" style="justify-content:center"><a class="btn" href="index.html#store">Back to Store</a></div>
+  </div>
+</main>
+
+<div id="site-footer"></div>
+
+<script src="js/store.js"></script>
+<script>
+(function () {
+  var q = (new URLSearchParams(location.search).get('q') || '').trim();
+  var results = searchProducts(q);
+
+  document.title = q ? ('Results for "' + q + '" - Lumen') : 'Search - Lumen';
+  document.getElementById('search-title').textContent = q ? 'Results for "' + q + '"' : 'Search';
+  document.getElementById('search-sub').textContent =
+    results.length + (results.length === 1 ? ' product found' : ' products found');
+
+  // GA4: view_search_results
+  window.dataLayer.push({
+    event: 'view_search_results',
+    search_term: q,
+    search_results_count: results.length
+  });
+
+  if (!results.length) {
+    document.getElementById('empty').hidden = false;
+    return;
+  }
+
+  var items = renderProductGrid(
+    document.getElementById('grid'),
+    results,
+    'search_results',
+    'Search Results'
+  );
+
+  // GA4: view_item_list for the results themselves
+  pushEcommerce('view_item_list', {
+    item_list_id: 'search_results',
+    item_list_name: 'Search Results',
+    items: items
+  });
+})();
+</script>
+</body>
+</html>
