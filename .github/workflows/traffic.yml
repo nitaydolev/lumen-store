@@ -1,12 +1,14 @@
 name: Store traffic
 
-# Wakes up every 30 minutes, asks the traffic model how busy this slice of
-# the day should be, drives that many visits through the live store, exits.
-# Several of these an hour draw the same daily curve a continuous run would.
+# Wakes up every 30 minutes and trickles visitors through the live store for
+# the rest of its slice, one at a time, spaced the way real arrivals are.
+# Each run hands over to the next, so the store never goes quiet.
 
 on:
   schedule:
-    - cron: '0,30 * * * *'
+    # Deliberately off the hour. GitHub queues scheduled runs globally and
+    # minutes 0 and 30 are the most contended, so they get delayed or dropped.
+    - cron: '12,42 * * * *'
   workflow_dispatch:          # lets you run it by hand from the Actions tab
     inputs:
       daily:
@@ -21,7 +23,9 @@ concurrency:
 jobs:
   visit:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Sending runs for 27 minutes; the rest is setup and headroom. The job
+    # has to be gone before the next one is due, or concurrency queues it.
+    timeout-minutes: 29
 
     env:
       # The curve follows this clock, so the shape matches what the GA4
@@ -47,4 +51,4 @@ jobs:
 
       - name: Send traffic
         working-directory: traffic-generator
-        run: node generate.js --batch 30 --daily "$DAILY" --url "$STORE_URL"
+        run: node generate.js --batch 27 --daily "$DAILY" --url "$STORE_URL"

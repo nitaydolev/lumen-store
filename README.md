@@ -135,14 +135,20 @@ The behaviour model lives in `traffic-generator/config.js`:
 cd traffic-generator
 npm install && npx playwright install chromium
 
-node generate.js --sessions 300 --workers 6     # one batch
+node generate.js --sessions 300 --workers 6     # one burst, as fast as it can
 node generate.js --forever --daily 1200         # continuous, paced by the clock
-node generate.js --batch 30 --daily 1200        # one 30 minute slice
+node generate.js --batch 27 --daily 1200        # the same, with a stopwatch
 ```
 
 A GitHub Actions workflow (`.github/workflows/traffic.yml`) runs the last of
 these every thirty minutes, so the store keeps receiving visitors with no
 machine of mine switched on.
+
+The timed slice matters more than it looks. A run that fires all its visits
+at once and sleeps for the rest of the half hour produces a sawtooth no real
+store has, and makes "users in the last 30 minutes" meaningless. So the slice
+sends one visitor at a time with a randomised gap, sized from the hourly
+curve, until its clock runs out. Consecutive slices read as one stream.
 
 ---
 

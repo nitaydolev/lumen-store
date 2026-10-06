@@ -7,14 +7,19 @@
    Each session gets a fresh browser context, which means a fresh
    cookie jar, which means GA4 counts it as a new user.
 
-   Two modes:
+   Three modes:
 
-     a fixed batch, which finishes and prints a summary
+     a fixed burst, which finishes as fast as it can and prints a summary
        node generate.js --sessions 300 --workers 6
 
      a continuous run, which never finishes and paces itself by the
        hour of the day, so the store looks alive rather than spiked
        node generate.js --forever --daily 1200
+
+     a timed slice, which is the continuous run with a stopwatch. One
+       visitor at a time, properly spaced, until the clock runs out.
+       Scheduled back to back, the slices read as one unbroken stream.
+       node generate.js --batch 27 --daily 1200
 
    Other flags:
      --url http://localhost:4321    aim somewhere else
@@ -261,18 +266,21 @@ async function runSession(browser, baseUrl, stats) {
   }
 }
 
-/* ---------- continuous mode ---------- */
+/* ---------- paced mode ---------- */
 
 /**
- * Runs until stopped. Recomputes the pace before every session, so the
- * rate follows the clock: a few visitors an hour at 04:00, many at 20:00.
- * Gaps are randomised around the target so arrivals are not metronomic.
+ * Sends one visitor at a time, with a realistic gap between them, until
+ * `deadline` passes. Pass null for a run that never stops.
+ *
+ * The pace is recomputed before every session, so the rate follows the
+ * clock: a few visitors an hour at 04:00, many at 20:00. Gaps are
+ * randomised around the target so arrivals are not metronomic.
  */
-async function runForever(browser, opts, stats) {
+async function runPaced(browser, opts, stats, deadline) {
   let hourStamp = -1;
   let hourCount = 0;
 
-  while (true) {
+  while (!deadline || Date.now() < deadline) {
     const now = new Date();
 
     if (now.getHours() !== hourStamp) {
@@ -295,7 +303,9 @@ async function runForever(browser, opts, stats) {
     hourCount++;
 
     // Jitter the gap, and subtract roughly how long the visit itself took
-    const gap = meanGap * (0.4 + Math.random() * 1.2) - 8000;
+    let gap = meanGap * (0.4 + Math.random() * 1.2) - 8000;
+    // Never sleep past the deadline, or the job sits idle waiting to be killed
+    if (deadline) gap = Math.min(gap, deadline - Date.now());
     if (gap > 0) await wait(gap);
   }
 }
@@ -313,25 +323,18 @@ async function main() {
     byChannel: {}
   };
 
-  /* Batch mode: a scheduled runner wakes up, asks how busy this slice of
-     the day should be, runs that many visits and exits. Several of these
-     an hour add up to the same curve a continuous run would draw. */
-  if (opts.batchMinutes > 0) {
-    const planned = sessionsThisHour(opts.daily, new Date()) * (opts.batchMinutes / 60);
-    opts.sessions = Math.max(1, Math.round(planned));
-    opts.workers = Math.min(4, Math.max(1, Math.ceil(opts.sessions / 8)));
-  }
-
   console.log('Lumen traffic generator');
   console.log('  target   ' + opts.baseUrl);
   if (opts.batchMinutes > 0) {
-    console.log('  mode     batch for the next ' + opts.batchMinutes + ' minutes');
+    const planned = sessionsThisHour(opts.daily, new Date()) * (opts.batchMinutes / 60);
+    console.log('  mode     paced for the next ' + opts.batchMinutes +
+                ' minutes, about ' + Math.round(planned) + ' sessions');
     console.log('  clock    ' + new Date().toString());
   }
   if (opts.forever) {
     console.log('  mode     continuous, about ' + opts.daily + ' sessions a day');
     console.log('  stop     Ctrl-C');
-  } else {
+  } else if (opts.batchMinutes === 0) {
     console.log('  sessions ' + opts.sessions);
     console.log('  workers  ' + opts.workers);
   }
@@ -342,24 +345,32 @@ async function main() {
   let queued = 0;
 
   if (opts.forever) {
-    await runForever(browser, opts, stats);
+    await runPaced(browser, opts, stats, null);
     return;
   }
 
-  async function worker(id) {
-    while (queued < opts.sessions) {
-      queued++;
-      await runSession(browser, opts.baseUrl, stats);
-      if (stats.sessions % 25 === 0 && stats.sessions > 0) {
-        const mins = (Date.now() - started) / 60000;
-        console.log('  ' + stats.sessions + '/' + opts.sessions +
-                    '  purchases ' + stats.purchases +
-                    '  (' + Math.round(stats.sessions / Math.max(mins, 0.01)) + '/min)');
+  if (opts.batchMinutes > 0) {
+    /* A scheduled runner wakes up and trickles visitors through the store
+       for its whole slice of the day, then exits. Back to back slices look
+       like one uninterrupted stream of visitors. */
+    await runPaced(browser, opts, stats, started + opts.batchMinutes * 60000);
+  } else {
+    async function worker(id) {
+      while (queued < opts.sessions) {
+        queued++;
+        await runSession(browser, opts.baseUrl, stats);
+        if (stats.sessions % 25 === 0 && stats.sessions > 0) {
+          const mins = (Date.now() - started) / 60000;
+          console.log('  ' + stats.sessions + '/' + opts.sessions +
+                      '  purchases ' + stats.purchases +
+                      '  (' + Math.round(stats.sessions / Math.max(mins, 0.01)) + '/min)');
+        }
       }
     }
+
+    await Promise.all(Array.from({ length: opts.workers }, (_, i) => worker(i)));
   }
 
-  await Promise.all(Array.from({ length: opts.workers }, (_, i) => worker(i)));
   await browser.close();
 
   const mins = (Date.now() - started) / 60000;
