@@ -54,6 +54,33 @@ const CHANNELS = [
   }
 ];
 
+/* ---------- Returning visitors ----------
+   Somebody who has been here before does not behave like a stranger, and
+   the difference is most of what makes a returning user worth reporting on.
+*/
+const RETURNING = {
+  share: 0.35,            // of all sessions, once there are people to send
+  poolMax: 800,           // visitors remembered at any one time
+  forgetAfterDays: 45,    // not back in this long, dropped from the pool
+  keepCart: 0.25,         // the rest come back to an empty bag
+
+  /* Nobody clicks a prospecting ad for a shop they already bought from.
+     They type the name, search for it, or follow the newsletter they
+     subscribed to. These are shares of returning sessions, not of all. */
+  channelWeights: {
+    'Direct': 0.40,
+    'Organic Search': 0.27,
+    'Email': 0.22,
+    'Paid Search': 0.06,
+    'Referral': 0.04,
+    'Paid Social': 0.01
+  },
+
+  /* Coming back means knowing what you want. Multiplies the channel's own
+     add to cart, checkout and purchase rates. */
+  conversionLift: 1.35
+};
+
 /* ---------- Where the visitor lands ---------- */
 const LANDING = [
   { kind: 'home',     weight: 0.44 },
@@ -136,5 +163,5 @@ const RATES = {
 
 module.exports = {
   CHANNELS, LANDING, DEVICES, PRODUCTS, CATEGORIES,
-  SEARCH_TERMS, COUPONS, RATES, HOURLY, DAY_OF_WEEK
+  SEARCH_TERMS, COUPONS, RATES, HOURLY, DAY_OF_WEEK, RETURNING
 };

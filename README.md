@@ -130,6 +130,29 @@ The behaviour model lives in `traffic-generator/config.js`:
   the data survives a glance at "users by hour of day".
 - Consent is accepted by about 86% of visitors, which leaves a realistic
   share of sessions measured without cookies.
+- About 35% of visits are made by somebody who has been here before.
+
+### Returning visitors
+
+GA4 tells a new user from a returning one by a cookie it sets on the first
+visit. A generator that opens a clean browser every time therefore produces
+a property where new users sit at 100%, the retention report is empty, and
+there is no such thing as the time between first visit and purchase. Half
+the interesting questions are unavailable.
+
+So the generator keeps a pool of people the store has met, holding each
+one's cookies, login and consent choice. A returning visit restores that
+browser state rather than starting clean, and GA4 recognises the same
+`client_id` coming back.
+
+Being known changes more than the cookie. Returning visitors arrive mostly
+direct, by search or through the newsletter rather than through prospecting
+ads, convert about a third better, do not sign up for a second account, and
+a quarter of them find last visit's abandoned cart still waiting.
+
+The pool is a file, and the workflow keeps it in the Actions cache between
+runs. That part is what makes retention mean anything: without it everyone
+would be born again every six hours.
 
 ```bash
 cd traffic-generator

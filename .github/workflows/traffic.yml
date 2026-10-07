@@ -50,6 +50,17 @@ jobs:
         with:
           node-version: '20'
 
+      # The pool of people the store has already met. Without this the file
+      # dies with the job, every visitor is new again every six hours, and
+      # the retention report stays empty. The key is unique per run so the
+      # cache can be written; restore-keys pulls the newest previous one.
+      - name: Remember returning visitors
+        uses: actions/cache@v4
+        with:
+          path: traffic-generator/visitors.json
+          key: visitors-${{ github.run_id }}
+          restore-keys: visitors-
+
       - name: Install dependencies
         working-directory: traffic-generator
         run: npm ci

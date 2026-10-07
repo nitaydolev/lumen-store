@@ -4,8 +4,10 @@
 
    Drives real headless browsers through the store so that every
    session travels the full path: dataLayer -> GTM -> GA4.
-   Each session gets a fresh browser context, which means a fresh
-   cookie jar, which means GA4 counts it as a new user.
+
+   Each session gets its own browser context. A stranger's is empty, so
+   GA4 counts them as a new user. A returning visitor's is restored from
+   the pool in visitors.js, cookies and all, so GA4 recognises them.
 
    Three modes:
 
@@ -26,8 +28,14 @@
      --headed                       watch the browsers work
    ============================================================ */
 
+const path = require('path');
 const { chromium, devices } = require('playwright');
 const C = require('./config');
+const { VisitorPool, forget } = require('./visitors');
+
+/* Who the store has met before. Kept next to this file so the workflow can
+   carry it from one run to the next. */
+const VISITORS_FILE = path.join(__dirname, 'visitors.json');
 
 /* ---------- small helpers ---------- */
 
@@ -105,8 +113,9 @@ async function answerConsent(page, stats) {
   }
 }
 
+/** Returns true if an account was actually created. */
 async function maybeSignUp(page, baseUrl, stats) {
-  if (!chance(C.RATES.signUp)) return;
+  if (!chance(C.RATES.signUp)) return false;
   await page.goto(baseUrl + '/account.html', { waitUntil: 'domcontentloaded' });
   await think();
   try {
@@ -116,7 +125,9 @@ async function maybeSignUp(page, baseUrl, stats) {
     await page.click('#signup button[type="submit"]');
     await page.waitForLoadState('domcontentloaded');
     stats.signUps++;
+    return true;
   } catch (e) { /* layout changed, skip */ }
+  return false;
 }
 
 async function maybeSearch(page, baseUrl, stats) {
@@ -216,13 +227,39 @@ async function runCheckout(page, baseUrl, channel, stats) {
 
 /* ---------- one visitor ---------- */
 
-async function runSession(browser, baseUrl, stats) {
-  const channel = weighted(C.CHANNELS);
-  const device = weighted(C.DEVICES);
+/**
+ * A returning visitor arrives differently: rarely through an ad, and more
+ * likely to buy. Both are applied here rather than in the walk itself, so
+ * the rest of the session code does not care who it is driving.
+ */
+function returningChannel() {
+  const w = C.RETURNING.channelWeights;
+  const choice = weighted(
+    C.CHANNELS.map((c) => ({ channel: c, weight: w[c.name] || 0.01 }))
+  ).channel;
+
+  const lift = C.RETURNING.conversionLift;
+  return {
+    ...choice,
+    addToCart: Math.min(0.95, choice.addToCart * lift),
+    checkout: Math.min(0.95, choice.checkout * lift),
+    purchase: Math.min(0.95, choice.purchase * lift)
+  };
+}
+
+async function runSession(browser, baseUrl, stats, pool) {
+  // Either somebody the store already knows, or a stranger
+  const known = chance(C.RETURNING.share) ? pool.take() : null;
+  const person = known || pool.stranger(weighted(C.DEVICES).name);
+  const channel = known ? returningChannel() : weighted(C.CHANNELS);
+
+  let state = person.state;
+  if (state && !chance(C.RETURNING.keepCart)) forget(state, 'lumen_cart');
 
   const context = await browser.newContext({
-    ...devices[device.name],
-    locale: 'en-US'
+    ...devices[person.device],
+    locale: 'en-US',
+    storageState: state || undefined
   });
   const page = await context.newPage();
 
@@ -233,8 +270,12 @@ async function runSession(browser, baseUrl, stats) {
     await think();
 
     stats.byChannel[channel.name] = (stats.byChannel[channel.name] || 0) + 1;
+    if (known) stats.returning++;
 
-    await maybeSignUp(page, baseUrl, stats);
+    // Somebody with an account does not sign up again
+    if (!person.hasAccount && await maybeSignUp(page, baseUrl, stats)) {
+      person.hasAccount = true;
+    }
     if (landing.kind === 'home') await maybeClickPromo(page, stats);
     await maybeSearch(page, baseUrl, stats);
 
@@ -262,6 +303,10 @@ async function runSession(browser, baseUrl, stats) {
     stats.errors++;
     if (stats.errors <= 3) console.error('  session error:', err.message.split('\n')[0]);
   } finally {
+    // Keep whatever the browser ended up holding: cookies, login, consent
+    try {
+      pool.remember(person, await context.storageState());
+    } catch (e) { /* context already gone, this visitor is simply not saved */ }
     await context.close();
   }
 }
@@ -279,7 +324,7 @@ const RECYCLE_AFTER = 120;
  * clock: a few visitors an hour at 04:00, many at 20:00. Gaps are
  * randomised around the target so arrivals are not metronomic.
  */
-async function runPaced(opts, stats, deadline) {
+async function runPaced(opts, stats, pool, deadline) {
   let hourStamp = -1;
   let hourCount = 0;
 
@@ -309,9 +354,12 @@ async function runPaced(opts, stats, deadline) {
     const perHour = Math.max(sessionsThisHour(opts.daily, now), 1);
     const meanGap = 3600000 / perHour;
 
-    await runSession(browser, opts.baseUrl, stats);
+    await runSession(browser, opts.baseUrl, stats, pool);
     hourCount++;
     sinceLaunch++;
+
+    // Checkpoint, so a run that gets cut short still leaves its visitors behind
+    if (stats.sessions % 20 === 0) await pool.save();
 
     if (sinceLaunch >= RECYCLE_AFTER) {
       await browser.close().catch(() => {});
@@ -338,13 +386,19 @@ async function main() {
   const stats = {
     sessions: 0, errors: 0, productViews: 0, addToCart: 0, viewCart: 0,
     beginCheckout: 0, addShipping: 0, purchases: 0, searches: 0,
-    signUps: 0, leads: 0, promoClicks: 0,
+    signUps: 0, leads: 0, promoClicks: 0, returning: 0,
     consent: { granted: 0, denied: 0 },
     byChannel: {}
   };
 
+  const pool = new VisitorPool(VISITORS_FILE, C.RETURNING);
+  const loaded = await pool.load();
+
   console.log('Lumen traffic generator');
   console.log('  target   ' + opts.baseUrl);
+  console.log('  known    ' + loaded.kept + ' returning visitors' +
+              (loaded.found > loaded.kept
+                ? ' (' + (loaded.found - loaded.kept) + ' forgotten)' : ''));
   if (opts.batchMinutes > 0) {
     const planned = sessionsThisHour(opts.daily, new Date()) * (opts.batchMinutes / 60);
     console.log('  mode     paced for the next ' + opts.batchMinutes +
@@ -364,7 +418,7 @@ async function main() {
   let queued = 0;
 
   if (opts.forever) {
-    await runPaced(opts, stats, null);
+    await runPaced(opts, stats, pool, null);
     return;
   }
 
@@ -372,13 +426,13 @@ async function main() {
     /* A scheduled runner wakes up and trickles visitors through the store
        for its whole slice of the day, then exits. Back to back slices look
        like one uninterrupted stream of visitors. */
-    await runPaced(opts, stats, started + opts.batchMinutes * 60000);
+    await runPaced(opts, stats, pool, started + opts.batchMinutes * 60000);
   } else {
     const browser = await chromium.launch({ headless: !opts.headed });
     async function worker(id) {
       while (queued < opts.sessions) {
         queued++;
-        await runSession(browser, opts.baseUrl, stats);
+        await runSession(browser, opts.baseUrl, stats, pool);
         if (stats.sessions % 25 === 0 && stats.sessions > 0) {
           const mins = (Date.now() - started) / 60000;
           console.log('  ' + stats.sessions + '/' + opts.sessions +
@@ -392,9 +446,14 @@ async function main() {
     await browser.close();
   }
 
+  const remembered = await pool.save();
+
   const mins = (Date.now() - started) / 60000;
   console.log('\nDone in ' + mins.toFixed(1) + ' minutes\n');
   console.log('  sessions        ' + stats.sessions + '   (errors ' + stats.errors + ')');
+  console.log('  returning       ' + stats.returning + '   (' +
+              (100 * stats.returning / Math.max(stats.sessions, 1)).toFixed(1) +
+              '% of sessions, ' + remembered + ' people remembered)');
   console.log('  product views   ' + stats.productViews);
   console.log('  add to cart     ' + stats.addToCart);
   console.log('  view cart       ' + stats.viewCart);
