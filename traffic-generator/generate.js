@@ -55,7 +55,74 @@ function weighted(list) {
 }
 
 /** Human-ish pause, so sessions do not all collapse into one instant. */
-const think = () => wait(120 + Math.random() * 450);
+/**
+ * Make the Google tag send whatever it is holding, right now.
+ *
+ * GA4 does not transmit an event the moment it happens. The tag queues events
+ * and flushes the queue about every five seconds, or when the page is leaving.
+ * A visitor who moves on sooner than that takes the queue with them and the
+ * events never arrive. Real people linger, so they never meet this; a robot
+ * that clicks through in 300ms loses nearly everything except page_view.
+ *
+ * Telling the page it has just been hidden triggers the tag's own departure
+ * handler, which sends the queue by beacon. The page is then handed back its
+ * visibility so engagement time keeps being measured normally.
+ */
+async function flushHits(page) {
+  try {
+    // A push is not a request yet: GTM has to match it to a trigger and build
+    // the hit first. Flushing in the same instant finds an empty queue.
+    await wait(260);
+    await page.evaluate(() => {
+      var visibility = function (value) {
+        Object.defineProperty(document, 'visibilityState', {
+          value: value, configurable: true
+        });
+      };
+      visibility('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('pagehide'));
+      visibility('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await wait(130);              // give the beacon time to leave
+  } catch (e) { /* already navigated away, nothing left to flush */ }
+}
+
+/** Pause the way a person would, then let anything queued go out. */
+const think = async (page) => {
+  await wait(120 + Math.random() * 450);
+  if (page) await flushHits(page);
+};
+
+/** Go to a page, having first let the page being left finish sending. */
+async function goTo(page, url) {
+  await flushHits(page);
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+}
+
+/**
+ * Click something that navigates, without losing the event the click itself
+ * raises. GTM needs a moment to turn a dataLayer push into a request, and a
+ * navigation starting in the same instant cuts it off, so the next document
+ * is held at the door while the old page catches up and sends.
+ */
+async function clickThrough(page, selector, options) {
+  const hold = async (route) => {
+    if (route.request().isNavigationRequest()) await wait(400);
+    await route.continue();
+  };
+  const isDocument = (url) => String(url).indexOf('.html') !== -1;
+
+  await page.route(isDocument, hold);
+  try {
+    await page.click(selector, options);
+    await flushHits(page);                 // the old page is still alive here
+    await page.waitForLoadState('domcontentloaded');
+  } finally {
+    await page.unroute(isDocument, hold).catch(() => {});
+  }
+}
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -70,7 +137,8 @@ function parseArgs() {
     headed: args.includes('--headed'),
     forever: args.includes('--forever'),
     daily: Number(get('--daily', 1200)),
-    batchMinutes: Number(get('--batch', 0))
+    batchMinutes: Number(get('--batch', 0)),
+    audit: args.includes('--audit')
   };
 }
 
@@ -108,6 +176,10 @@ async function answerConsent(page, stats) {
     await page.waitForSelector('#consent-banner', { timeout: 2500 });
     await page.click(button);
     stats.consent[accept ? 'granted' : 'denied']++;
+    // Consent Mode is set to hold everything for 500ms waiting for an answer
+    // like this one. Flushing before that window closes sends nothing at all,
+    // not even the page_view, so the landing page has to be given its moment.
+    await wait(650);
   } catch (e) {
     /* no banner on this load, nothing to answer */
   }
@@ -116,14 +188,13 @@ async function answerConsent(page, stats) {
 /** Returns true if an account was actually created. */
 async function maybeSignUp(page, baseUrl, stats) {
   if (!chance(C.RATES.signUp)) return false;
-  await page.goto(baseUrl + '/account.html', { waitUntil: 'domcontentloaded' });
-  await think();
+  await goTo(page, baseUrl + '/account.html');
+  await think(page);
   try {
     await page.click('.tab[data-tab="signup"]');
     const email = 'shopper' + Math.floor(Math.random() * 1e6) + '@example.com';
     await page.fill('#signup input[name="email"]', email);
-    await page.click('#signup button[type="submit"]');
-    await page.waitForLoadState('domcontentloaded');
+    await clickThrough(page, '#signup button[type="submit"]');
     stats.signUps++;
     return true;
   } catch (e) { /* layout changed, skip */ }
@@ -133,9 +204,9 @@ async function maybeSignUp(page, baseUrl, stats) {
 async function maybeSearch(page, baseUrl, stats) {
   if (!chance(C.RATES.searchDuringVisit)) return;
   const term = pick(C.SEARCH_TERMS);
-  await page.goto(baseUrl + '/search.html?q=' + encodeURIComponent(term), { waitUntil: 'domcontentloaded' });
+  await goTo(page, baseUrl + '/search.html?q=' + encodeURIComponent(term));
   stats.searches++;
-  await think();
+  await think(page);
 }
 
 async function maybeNewsletter(page, stats) {
@@ -144,85 +215,171 @@ async function maybeNewsletter(page, stats) {
     await page.fill('#newsletter-form input[name="email"]', 'reader' + Math.floor(Math.random() * 1e6) + '@example.com');
     await page.click('#newsletter-form button[type="submit"]');
     stats.leads++;
-    await think();
+    await think(page);
   } catch (e) { /* the form is gone once submitted */ }
 }
 
 async function maybeClickPromo(page, stats) {
   if (!chance(C.RATES.viewPromotion)) return;
   try {
-    await page.click('.promo-body', { timeout: 1200 });
-    await page.waitForLoadState('domcontentloaded');
+    await clickThrough(page, '.promo-body', { timeout: 1200 });
     stats.promoClicks++;
   } catch (e) { /* no banner on this page */ }
 }
 
 async function viewProduct(page, baseUrl, productId) {
-  await page.goto(baseUrl + '/product.html?id=' + productId, { waitUntil: 'domcontentloaded' });
-  await think();
+  await goTo(page, baseUrl + '/product.html?id=' + productId);
+  await think(page);
 
   // Some visitors try a different colour or capacity before deciding
   if (chance(0.45)) {
     const swatches = await page.$$('.swatch');
     if (swatches.length > 1) {
       await swatches[Math.floor(Math.random() * swatches.length)].click();
-      await think();
+      await think(page);
     }
   }
   if (chance(0.35)) {
     const options = await page.$$('.option');
     if (options.length > 1) {
       await options[Math.floor(Math.random() * options.length)].click();
-      await think();
+      await think(page);
     }
   }
 }
 
 async function runCheckout(page, baseUrl, channel, stats) {
-  await page.goto(baseUrl + '/cart.html', { waitUntil: 'domcontentloaded' });
+  await goTo(page, baseUrl + '/cart.html');
   stats.viewCart++;
-  await think();
+  await think(page);
 
   // A few people change their mind about quantity, or drop the item entirely
   if (chance(0.18)) {
-    try { await page.click('.qty button[data-inc]', { timeout: 1000 }); await think(); } catch (e) {}
+    try { await page.click('.qty button[data-inc]', { timeout: 1000 }); await think(page); } catch (e) {}
   }
   if (chance(0.09)) {
-    try { await page.click('.link-remove', { timeout: 1000 }); await think(); } catch (e) {}
+    try { await page.click('.link-remove', { timeout: 1000 }); await think(page); } catch (e) {}
     const empty = await page.$('.empty');
     if (empty) return false;      // emptied the bag, session ends here
   }
 
   if (!chance(channel.checkout)) return false;
 
-  await page.click('#checkout');
-  await page.waitForLoadState('domcontentloaded');
+  await clickThrough(page, '#checkout');
   stats.beginCheckout++;
-  await think();
+  await think(page);
 
   if (chance(C.RATES.useCoupon)) {
     try {
       await page.fill('#coupon-form input[name="code"]', pick(C.COUPONS));
       await page.click('#coupon-form button[type="submit"]');
-      await think();
+      await think(page);
     } catch (e) {}
   }
 
   if (chance(C.RATES.expressShipping)) {
-    try { await page.selectOption('#shipping-tier', 'Express'); await think(); } catch (e) {}
+    try { await page.selectOption('#shipping-tier', 'Express'); await think(page); } catch (e) {}
   }
 
   await page.click('#shipping button[type="submit"]');
   stats.addShipping++;
-  await think();
+  await think(page);
 
   if (!chance(channel.purchase)) return false;   // drops out at payment
 
-  await page.click('#payment button[type="submit"]');
-  await page.waitForLoadState('domcontentloaded');
+  await clickThrough(page, '#payment button[type="submit"]');
   stats.purchases++;
-  await wait(900);                                // let the purchase hit leave
+  await flushHits(page);                          // let the purchase hit leave
   return true;
+}
+
+/* ---------- audit ----------
+
+   An event that the site pushes but Google never receives is invisible: the
+   reports simply show a smaller number, and nothing anywhere says a hit was
+   lost. That is how the missing add_to_cart went unnoticed for two days.
+
+   With --audit the generator watches both ends of the pipe at once and
+   reports the difference, so a regression in the tracking shows up as a
+   number rather than as a puzzle in GA4 a week later.
+*/
+
+/** Count every event name the page hands to the dataLayer, across navigations. */
+async function watchPushes(page, audit) {
+  await page.exposeFunction('__auditPush', function (name) {
+    audit.pushed[name] = (audit.pushed[name] || 0) + 1;
+  });
+  // Runs fresh on every document, before the site's own scripts
+  await page.addInitScript(function () {
+    window.dataLayer = window.dataLayer || [];
+    var send = window.dataLayer.push.bind(window.dataLayer);
+    window.dataLayer.push = function () {
+      for (var i = 0; i < arguments.length; i++) {
+        var entry = arguments[i];
+        if (entry && entry.event && String(entry.event).indexOf('gtm.') !== 0) {
+          try { window.__auditPush(String(entry.event)); } catch (e) {}
+        }
+      }
+      return send.apply(null, arguments);
+    };
+  });
+}
+
+/** Count every event name that actually reaches Google's collection endpoint. */
+function watchHits(page, audit) {
+  page.on('request', function (req) {
+    var url = req.url();
+    if (url.indexOf('/g/collect') === -1) return;
+
+    var names = [];
+    try {
+      new URL(url).searchParams.getAll('en').forEach(function (n) { names.push(n); });
+    } catch (e) {}
+
+    // Batched hits arrive as one event per line in the body
+    var body = req.postData();
+    if (body) {
+      body.split('\n').forEach(function (line) {
+        var m = /(?:^|&)en=([^&]+)/.exec(line);
+        if (m) names.push(decodeURIComponent(m[1]));
+      });
+    }
+
+    names.forEach(function (n) {
+      audit.delivered[n] = (audit.delivered[n] || 0) + 1;
+    });
+  });
+}
+
+/* Pushed to the dataLayer on purpose, and deliberately not forwarded to GA4.
+   Not a loss, so the audit should not call it one. See the README. */
+const NOT_FORWARDED = ['consent_update'];
+
+function reportAudit(audit) {
+  var names = Object.keys(audit.pushed)
+    .concat(Object.keys(audit.delivered))
+    .filter(function (n, i, all) { return all.indexOf(n) === i; })
+    .sort();
+
+  console.log('\n  GA4 audit   (what the site pushed, what Google received)\n');
+  console.log('    ' + 'event'.padEnd(22) + 'pushed'.padStart(8) + 'delivered'.padStart(11) + '   ');
+
+  var lost = [];
+  names.forEach(function (n) {
+    var pushed = audit.pushed[n] || 0;
+    var got = audit.delivered[n] || 0;
+    var byDesign = NOT_FORWARDED.indexOf(n) !== -1;
+    // page_view and session_start come from the tag itself, never the dataLayer
+    var short = pushed > 0 && got < pushed && !byDesign;
+    if (short) lost.push(n + ' (' + (pushed - got) + ' of ' + pushed + ')');
+    console.log('    ' + n.padEnd(22) + String(pushed).padStart(8) +
+                String(got).padStart(11) +
+                (short ? '   LOST' : byDesign ? '   not forwarded, by design' : ''));
+  });
+
+  console.log('');
+  if (lost.length) console.log('    events lost in flight: ' + lost.join(', '));
+  else console.log('    nothing lost');
 }
 
 /* ---------- one visitor ---------- */
@@ -262,12 +419,16 @@ async function runSession(browser, baseUrl, stats, pool) {
     storageState: state || undefined
   });
   const page = await context.newPage();
+  if (stats.audit) {
+    watchHits(page, stats.audit);
+    await watchPushes(page, stats.audit);
+  }
 
   try {
     const landing = landingUrl(baseUrl, channel);
     await page.goto(landing.url, { waitUntil: 'domcontentloaded' });
     await answerConsent(page, stats);
-    await think();
+    await think(page);
 
     stats.byChannel[channel.name] = (stats.byChannel[channel.name] || 0) + 1;
     if (known) stats.returning++;
@@ -293,11 +454,11 @@ async function runSession(browser, baseUrl, stats, pool) {
     if (lastProduct && chance(channel.addToCart)) {
       await page.click('#add');
       stats.addToCart++;
-      await think();
+      await think(page);
       await runCheckout(page, baseUrl, channel, stats);
     }
 
-    await wait(500);          // give the last hits time to go out
+    await flushHits(page);    // give the last hits time to go out
     stats.sessions++;
   } catch (err) {
     stats.errors++;
@@ -388,7 +549,8 @@ async function main() {
     beginCheckout: 0, addShipping: 0, purchases: 0, searches: 0,
     signUps: 0, leads: 0, promoClicks: 0, returning: 0,
     consent: { granted: 0, denied: 0 },
-    byChannel: {}
+    byChannel: {},
+    audit: opts.audit ? { pushed: {}, delivered: {} } : null
   };
 
   const pool = new VisitorPool(VISITORS_FILE, C.RETURNING);
@@ -465,6 +627,7 @@ async function main() {
   console.log('  newsletter      ' + stats.leads);
   console.log('  promo clicks    ' + stats.promoClicks);
   console.log('  consent         granted ' + stats.consent.granted + ', denied ' + stats.consent.denied);
+  if (stats.audit) reportAudit(stats.audit);
   console.log('\n  by channel');
   for (const [name, n] of Object.entries(stats.byChannel).sort((a, b) => b[1] - a[1])) {
     console.log('    ' + name.padEnd(16) + n);

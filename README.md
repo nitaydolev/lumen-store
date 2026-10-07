@@ -158,6 +158,7 @@ would be born again every six hours.
 cd traffic-generator
 npm install && npx playwright install chromium
 
+node generate.js --sessions 20 --workers 1 --audit   # check the tracking itself
 node generate.js --sessions 300 --workers 6     # one burst, as fast as it can
 node generate.js --forever --daily 1200         # continuous, paced by the clock
 node generate.js --batch 350 --daily 1200       # the same, with a stopwatch
@@ -172,6 +173,32 @@ at once and then sleeps produces a sawtooth no real store has, and makes
 "users in the last 30 minutes" meaningless. So the slice sends one visitor at
 a time with a randomised gap, sized from the hourly curve, until its clock
 runs out. Consecutive slices read as one stream.
+
+### Auditing the tracking
+
+`--audit` counts every event the site hands to the dataLayer and every event
+that actually arrives at Google's collection endpoint, and prints the two
+side by side. An event that is pushed but never sent is otherwise invisible:
+the reports just show a smaller number, and nothing anywhere says a hit was
+lost.
+
+That is not hypothetical. The generator originally moved on about 300ms
+after each action, and GA4 does not transmit an event when it happens — the
+tag queues events and flushes roughly every five seconds, or when the page
+is leaving. Almost every ecommerce event was being discarded with the page
+that raised it, while `purchase` survived because the walk happened to wait
+longer there. The reports showed twelve purchases against one add to cart,
+which reads like a broken funnel rather than a broken generator.
+
+The walk now flushes the queue before it leaves a page, by telling the page
+it has been hidden, which is the same departure the tag already listens for.
+Delivery went from roughly a fifth of events to 217 of 218.
+
+The same audit turned up a second thing: `view_search_results` arrives three
+times for every search. One is ours, and two come from GA4's own Enhanced
+Measurement, which fires a search event whenever it sees a `q` parameter in
+the URL. Verified by loading the home page with `?q=` and watching two
+search events leave for a page that has no search on it.
 
 ### Scheduling, and why it is shaped like that
 
