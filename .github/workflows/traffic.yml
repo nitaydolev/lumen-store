@@ -1,14 +1,21 @@
 name: Store traffic
 
-# Wakes up every 30 minutes and trickles visitors through the live store for
-# the rest of its slice, one at a time, spaced the way real arrivals are.
-# Each run hands over to the next, so the store never goes quiet.
+# Trickles visitors through the live store, one at a time, spaced the way
+# real arrivals are, for just under the six hours a job is allowed to live.
+#
+# The schedule is deliberately far more frequent than the job length. GitHub
+# fires scheduled runs on a best effort basis and drops most of them on a
+# free public repository: of 18 half-hourly firings owed overnight, one
+# arrived, 26 minutes late. So rather than needing 48 firings a day to land,
+# this needs 4. The concurrency group holds the extra firings as a single
+# pending run, which starts the moment the running one exits. Every hour is
+# another chance to refill that pending slot, and only a six hour drought
+# leaves the store quiet.
 
 on:
   schedule:
-    # Deliberately off the hour. GitHub queues scheduled runs globally and
-    # minutes 0 and 30 are the most contended, so they get delayed or dropped.
-    - cron: '12,42 * * * *'
+    # Off the hour: minutes 0 and 30 are the most contended in the queue.
+    - cron: '17 * * * *'
   workflow_dispatch:          # lets you run it by hand from the Actions tab
     inputs:
       daily:
@@ -17,15 +24,17 @@ on:
         default: '1200'
 
 concurrency:
-  group: store-traffic        # never let two runs overlap
+  # One run at a time, with one more waiting in the wings. A newly queued
+  # run replaces whatever was pending; the one already sending is untouched.
+  group: store-traffic
   cancel-in-progress: false
 
 jobs:
   visit:
     runs-on: ubuntu-latest
-    # Sending runs for 27 minutes; the rest is setup and headroom. The job
-    # has to be gone before the next one is due, or concurrency queues it.
-    timeout-minutes: 29
+    # Six hours is the hard ceiling GitHub puts on a job. Sending stops at
+    # 350 minutes so the summary gets printed instead of the job being shot.
+    timeout-minutes: 358
 
     env:
       # The curve follows this clock, so the shape matches what the GA4
@@ -51,4 +60,4 @@ jobs:
 
       - name: Send traffic
         working-directory: traffic-generator
-        run: node generate.js --batch 27 --daily "$DAILY" --url "$STORE_URL"
+        run: node generate.js --batch 350 --daily "$DAILY" --url "$STORE_URL"

@@ -137,18 +137,35 @@ npm install && npx playwright install chromium
 
 node generate.js --sessions 300 --workers 6     # one burst, as fast as it can
 node generate.js --forever --daily 1200         # continuous, paced by the clock
-node generate.js --batch 27 --daily 1200        # the same, with a stopwatch
+node generate.js --batch 350 --daily 1200       # the same, with a stopwatch
 ```
 
 A GitHub Actions workflow (`.github/workflows/traffic.yml`) runs the last of
-these every thirty minutes, so the store keeps receiving visitors with no
-machine of mine switched on.
+these around the clock, so the store keeps receiving visitors with no machine
+of mine switched on.
 
 The timed slice matters more than it looks. A run that fires all its visits
-at once and sleeps for the rest of the half hour produces a sawtooth no real
-store has, and makes "users in the last 30 minutes" meaningless. So the slice
-sends one visitor at a time with a randomised gap, sized from the hourly
-curve, until its clock runs out. Consecutive slices read as one stream.
+at once and then sleeps produces a sawtooth no real store has, and makes
+"users in the last 30 minutes" meaningless. So the slice sends one visitor at
+a time with a randomised gap, sized from the hourly curve, until its clock
+runs out. Consecutive slices read as one stream.
+
+### Scheduling, and why it is shaped like that
+
+The first version woke up every thirty minutes. It should have run 48 times
+a day; overnight it ran once, 26 minutes late. GitHub fires scheduled
+workflows on a best effort basis and a free public repository sits at the
+back of that queue.
+
+So the job was made as long as GitHub allows, just under six hours, and the
+schedule left hourly. Only four firings a day need to land. The extra ones
+are not wasted: the concurrency group keeps exactly one run pending, and a
+pending run starts the instant the running one exits, which hands traffic
+over without a gap. Each hourly firing is another chance to refill that slot,
+so it would take a six hour drought to leave the store quiet.
+
+A six hour browser session is long enough to bloat, so the paced loop closes
+Chromium and launches a fresh one every 120 visits.
 
 ---
 

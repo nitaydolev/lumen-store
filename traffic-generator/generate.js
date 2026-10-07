@@ -268,6 +268,9 @@ async function runSession(browser, baseUrl, stats) {
 
 /* ---------- paced mode ---------- */
 
+/* Sessions to run before the browser is thrown away and relaunched. */
+const RECYCLE_AFTER = 120;
+
 /**
  * Sends one visitor at a time, with a realistic gap between them, until
  * `deadline` passes. Pass null for a run that never stops.
@@ -276,9 +279,16 @@ async function runSession(browser, baseUrl, stats) {
  * clock: a few visitors an hour at 04:00, many at 20:00. Gaps are
  * randomised around the target so arrivals are not metronomic.
  */
-async function runPaced(browser, opts, stats, deadline) {
+async function runPaced(opts, stats, deadline) {
   let hourStamp = -1;
   let hourCount = 0;
+
+  /* This loop can be asked to stay up for six hours, which is long enough
+     for a browser process to bloat or wedge. It owns its own browser and
+     replaces it periodically rather than trusting one to last the night. */
+  const launch = () => chromium.launch({ headless: !opts.headed });
+  let browser = await launch();
+  let sinceLaunch = 0;
 
   while (!deadline || Date.now() < deadline) {
     const now = new Date();
@@ -301,6 +311,14 @@ async function runPaced(browser, opts, stats, deadline) {
 
     await runSession(browser, opts.baseUrl, stats);
     hourCount++;
+    sinceLaunch++;
+
+    if (sinceLaunch >= RECYCLE_AFTER) {
+      await browser.close().catch(() => {});
+      browser = await launch();
+      sinceLaunch = 0;
+      console.log('  [' + new Date().toLocaleTimeString() + '] fresh browser');
+    }
 
     // Jitter the gap, and subtract roughly how long the visit itself took
     let gap = meanGap * (0.4 + Math.random() * 1.2) - 8000;
@@ -308,6 +326,8 @@ async function runPaced(browser, opts, stats, deadline) {
     if (deadline) gap = Math.min(gap, deadline - Date.now());
     if (gap > 0) await wait(gap);
   }
+
+  await browser.close().catch(() => {});
 }
 
 /* ---------- driver ---------- */
@@ -340,12 +360,11 @@ async function main() {
   }
   console.log('');
 
-  const browser = await chromium.launch({ headless: !opts.headed });
   const started = Date.now();
   let queued = 0;
 
   if (opts.forever) {
-    await runPaced(browser, opts, stats, null);
+    await runPaced(opts, stats, null);
     return;
   }
 
@@ -353,8 +372,9 @@ async function main() {
     /* A scheduled runner wakes up and trickles visitors through the store
        for its whole slice of the day, then exits. Back to back slices look
        like one uninterrupted stream of visitors. */
-    await runPaced(browser, opts, stats, started + opts.batchMinutes * 60000);
+    await runPaced(opts, stats, started + opts.batchMinutes * 60000);
   } else {
+    const browser = await chromium.launch({ headless: !opts.headed });
     async function worker(id) {
       while (queued < opts.sessions) {
         queued++;
@@ -369,9 +389,8 @@ async function main() {
     }
 
     await Promise.all(Array.from({ length: opts.workers }, (_, i) => worker(i)));
+    await browser.close();
   }
-
-  await browser.close();
 
   const mins = (Date.now() - started) / 60000;
   console.log('\nDone in ' + mins.toFixed(1) + ' minutes\n');
