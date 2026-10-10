@@ -3,3 +3,5 @@ node_modules/
 traffic-generator/visitors.json
 .vercel
 transcripts/
+# never, under any circumstances, the service account key
+*key.json
